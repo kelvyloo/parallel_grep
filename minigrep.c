@@ -14,6 +14,22 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <pthread.h>
+
+/***** PTHREAD STUFF *********************************/
+#define NUM_WORKER_THREADS 20
+
+typedef struct workers_state {
+    int still_working;
+    pthread_mutex_t mutex;
+    pthread_cond_t signal;
+} workers_state_t;
+
+static struct workers_state wstate = {
+    .still_working = NUM_WORKER_THREADS,
+    .mutex = PTHREAD_MUTEX_INITIALIZER,
+    .signal = PTHREAD_COND_INITIALIZER
+};
 
 /***** CUSTOM TYPES **********************************/
 struct queue {
@@ -223,15 +239,94 @@ void minigrep_simple (char* path, char* string)
     printf("\n\nFound %u instance(s) of string \"%s\".\n", num_occurences, string);
 }
 
+/* Lock mutex and exit if failed */
+void lock_mutex(void)
+{
+    int ret;
+
+    ret = pthread_mutex_lock(&wstate.mutex);
+    if (ret) {
+        fprintf(stderr, "Failed to lock mutex\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/* Unlock mutex and exit if failed */
+void unlock_mutex(void)
+{
+    int ret;
+
+    ret = pthread_mutex_unlock(&wstate.mutex);
+    if (ret) {
+        fprintf(stderr, "Failed to unlock mutex\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/* Changes condition variable exit if failed */
+void signal_threads(void)
+{
+    int ret;
+
+    pthread_cond_signal(&wstate.signal);
+    if (ret) {
+        fprintf(stderr, "Failed to change condition variable\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void* worker_thread (void* param)
+{
+    lock_mutex();
+
+    unlock_mutex();
+
+    signal_threads();
+
+    return NULL;
+}
+
+/* Set pthread attribute to detached exit on failure */
+void set_pthread_detach(pthread_attr_t *attr)
+{
+    int ret;
+
+    ret = pthread_attr_init(attr);
+    if (ret) {
+        fprintf(stderr, "Failed to init pthread attribute\n");
+        exit(EXIT_FAILURE);
+    }
+
+    pthread_attr_setdetachstate(attr, PTHREAD_CREATE_DETACHED);
+}
 
 /* Given a starting path, minigrep_pthreads uses multiple threads
  * to recursively search all files and directories within path
  * for the specified string */
 void minigrep_pthreads(char* path, char* string)
 {
-    /* YOU DESIGN THE CONTENTS OF THIS FUNCTION */
+    int i, ret;
+    pthread_t tid;
+    pthread_attr_t attr;
 
-    printf("\n\nNot yet implemented.\n");
+    set_pthread_detach(&attr);
+
+    // Create NUM_WORKER detached threads
+    for (i = 0; i < NUM_WORKER_THREADS; i++) {
+
+        ret = pthread_create(&tid, &attr, worker_thread, NULL);
+        if (ret) {
+            fprintf(stderr, "Failed to create thread %d\n", i);
+            return ;
+        }
+    }
+
+    lock_mutex();
+
+    while (wstate.still_working)
+        pthread_cond_wait(&wstate.signal, &wstate.mutex);
+
+    unlock_mutex();
 }
 
 
