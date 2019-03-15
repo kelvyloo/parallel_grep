@@ -1,5 +1,5 @@
 build:
-	gcc -o minigrep minigrep.c -pthread
+	gcc -o minigrep -g minigrep.c -pthread
 
 clean:
 	-rm -f minigrep
