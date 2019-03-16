@@ -48,19 +48,22 @@ void enqueue (queue_t* head, char* path)
 }
 
 /***** PTHREAD STUFF *********************************/
-#define NUM_WORKER_THREADS 5
+#define NUM_WORKER_THREADS 25
 
 typedef struct thread_data {
+    int tid;
     char *string;
 } thread_data_t;
 
 typedef struct workers_state {
+    int still_working;
     queue_t t_work_queue;
     pthread_mutex_t mutex;
     pthread_cond_t signal;
 } workers_state_t;
 
 static struct workers_state wstate = {
+    .still_working = NUM_WORKER_THREADS,
     .t_work_queue = QUEUE_INITIALIZER,
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .signal = PTHREAD_COND_INITIALIZER
@@ -182,7 +185,7 @@ unsigned int handle_file (char* current_path, char* string)
         /* get offset of substring "string" within the string "line" */
         offset = strstr(line, string);
         if (offset != NULL) {
-            printf("%s:%u: %s", current_path, line_number, line);
+            //printf("%s:%u: %s", current_path, line_number, line);
             num_occurences++;
         }
     }
@@ -291,6 +294,8 @@ void* worker_thread (void* param)
         dequeue(&wstate.t_work_queue, current_path);
         unlock_mutex();
 
+        printf("Thread %d working %s\n", args->tid, current_path);
+
         lstat(current_path, &file_stats);
         /* if work item is a file, scan it for our string
          * if work item is a directory, add its contents to the work queue */
@@ -317,6 +322,11 @@ void* worker_thread (void* param)
             printf("warning -- skipping file of unknown type %s\n", current_path);
         }
     }
+
+    lock_mutex();
+    wstate.still_working--;
+    unlock_mutex();
+
     signal_threads();
 
     return NULL;
@@ -357,18 +367,19 @@ void create_detached_thread(thread_data_t *args)
 void minigrep_pthreads(char* path, char* string)
 {
     int i;
-    thread_data_t *thread_args = malloc(sizeof(thread_data_t));
-
-    thread_args->string = string;
+    thread_data_t *thread_args = malloc(NUM_WORKER_THREADS * sizeof(thread_data_t));
 
     enqueue(&wstate.t_work_queue, path);
 
-    for (i = 0; i < NUM_WORKER_THREADS; i++)
-        create_detached_thread(thread_args);
+    for (i = 0; i < NUM_WORKER_THREADS; i++) {
+        thread_args[i].tid = i;
+        thread_args[i].string = string;
+        create_detached_thread(&thread_args[i]);
+    }
 
     lock_mutex();
 
-    while(wstate.t_work_queue != NULL) {
+    while(wstate.still_working) {
         pthread_cond_wait(&wstate.signal, &wstate.mutex);
     }
 
