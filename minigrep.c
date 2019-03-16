@@ -48,7 +48,7 @@ void enqueue (queue_t* head, char* path)
 }
 
 /***** PTHREAD STUFF *********************************/
-#define NUM_WORKER_THREADS 3
+#define NUM_WORKER_THREADS 5
 
 typedef struct thread_data {
     char *string;
