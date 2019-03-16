@@ -302,7 +302,6 @@ void* worker_thread (void* param)
                 fprintf(stderr, "warning -- unable to decend into %s\n", current_path);
             }
             unlock_mutex();
-            signal_threads();
         }
         else if (S_ISREG(file_stats.st_mode)) {
             /* work item is a file; scan it for our string */
