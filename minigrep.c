@@ -16,21 +16,6 @@
 #include <sys/time.h>
 #include <pthread.h>
 
-/***** PTHREAD STUFF *********************************/
-#define NUM_WORKER_THREADS 20
-
-typedef struct workers_state {
-    int still_working;
-    pthread_mutex_t mutex;
-    pthread_cond_t signal;
-} workers_state_t;
-
-static struct workers_state wstate = {
-    .still_working = NUM_WORKER_THREADS,
-    .mutex = PTHREAD_MUTEX_INITIALIZER,
-    .signal = PTHREAD_COND_INITIALIZER
-};
-
 /***** CUSTOM TYPES **********************************/
 struct queue {
     char path[PATH_MAX];
@@ -61,6 +46,25 @@ void enqueue (queue_t* head, char* path)
     (*head)->next = next;
     strcpy((*head)->path, path);
 }
+
+/***** PTHREAD STUFF *********************************/
+#define NUM_WORKER_THREADS 3
+
+typedef struct thread_data {
+    char *string;
+} thread_data_t;
+
+typedef struct workers_state {
+    queue_t t_work_queue;
+    pthread_mutex_t mutex;
+    pthread_cond_t signal;
+} workers_state_t;
+
+static struct workers_state wstate = {
+    .t_work_queue = QUEUE_INITIALIZER,
+    .mutex = PTHREAD_MUTEX_INITIALIZER,
+    .signal = PTHREAD_COND_INITIALIZER
+};
 
 /* removes the oldest item from the queue and populates it into path.
  * if the queue is empty, path is populated with NULL */
@@ -271,16 +275,49 @@ void signal_threads(void)
     pthread_cond_signal(&wstate.signal);
     if (ret) {
         fprintf(stderr, "Failed to change condition variable\n");
-        exit(EXIT_FAILURE);
+        return ;
     }
 }
 
 void* worker_thread (void* param)
 {
-    lock_mutex();
+    thread_data_t *args = (thread_data_t *) param;
+    char current_path[PATH_MAX];
+    struct stat file_stats;
+    int ret;
 
-    unlock_mutex();
+    while (wstate.t_work_queue != NULL) {
+        lock_mutex();
+        dequeue(&wstate.t_work_queue, current_path);
+        unlock_mutex();
 
+        lstat(current_path, &file_stats);
+        /* if work item is a file, scan it for our string
+         * if work item is a directory, add its contents to the work queue */
+        if (S_ISDIR(file_stats.st_mode)) {
+            /* work item is a directory; descend into it and post work to the queue */
+            lock_mutex();
+            ret = handle_directory(&wstate.t_work_queue, current_path);
+            if (ret < 0) {
+                fprintf(stderr, "warning -- unable to decend into %s\n", current_path);
+            }
+            unlock_mutex();
+            signal_threads();
+        }
+        else if (S_ISREG(file_stats.st_mode)) {
+            /* work item is a file; scan it for our string */
+            ret = handle_file(current_path, args->string);
+            if (ret < 0) {
+                fprintf(stderr, "warning -- unable to open %s\n", current_path);
+            }
+        }
+        else if (S_ISLNK(file_stats.st_mode)) {
+            /* work item is a symbolic link -- do nothing */
+        }
+        else {
+            printf("warning -- skipping file of unknown type %s\n", current_path);
+        }
+    }
     signal_threads();
 
     return NULL;
@@ -300,33 +337,47 @@ void set_pthread_detach(pthread_attr_t *attr)
     pthread_attr_setdetachstate(attr, PTHREAD_CREATE_DETACHED);
 }
 
-/* Given a starting path, minigrep_pthreads uses multiple threads
- * to recursively search all files and directories within path
- * for the specified string */
-void minigrep_pthreads(char* path, char* string)
+void create_detached_thread(thread_data_t *args)
 {
-    int i, ret;
+    int ret;
     pthread_t tid;
     pthread_attr_t attr;
 
     set_pthread_detach(&attr);
 
-    // Create NUM_WORKER detached threads
-    for (i = 0; i < NUM_WORKER_THREADS; i++) {
-
-        ret = pthread_create(&tid, &attr, worker_thread, NULL);
-        if (ret) {
-            fprintf(stderr, "Failed to create thread %d\n", i);
-            return ;
-        }
+    ret = pthread_create(&tid, &attr, worker_thread, args);
+    if (ret) {
+        fprintf(stderr, "Failed to create thread\n");
+        return ;
     }
+}
+
+/* Given a starting path, minigrep_pthreads uses multiple threads
+ * to recursively search all files and directories within path
+ * for the specified string */
+void minigrep_pthreads(char* path, char* string)
+{
+    int i;
+    thread_data_t *thread_args = malloc(sizeof(thread_data_t));
+
+    thread_args->string = string;
+
+    enqueue(&wstate.t_work_queue, path);
+
+    for (i = 0; i < NUM_WORKER_THREADS; i++)
+        create_detached_thread(thread_args);
 
     lock_mutex();
 
-    while (wstate.still_working)
+    while(wstate.t_work_queue != NULL) {
         pthread_cond_wait(&wstate.signal, &wstate.mutex);
+    }
 
     unlock_mutex();
+
+    free(thread_args);
+
+    printf("\n\nFound %u instance(s) of string \"%s\".\n", num_occurences, string);
 }
 
 
