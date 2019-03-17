@@ -390,10 +390,6 @@ void minigrep_pthreads(char* path, char* string)
 
     free(thread_args);
 
-    printf("\n\n");
-    for (i = 0; i < NUM_WORKER_THREADS; i++)
-        printf("Thread %d accessed global %d time(s)\n", i, probs[i]);
-
     printf("\n\nFound %u instance(s) of string \"%s\".\n", num_occurences, string);
 }
 
