@@ -185,7 +185,7 @@ unsigned int handle_file (char* current_path, char* string)
         /* get offset of substring "string" within the string "line" */
         offset = strstr(line, string);
         if (offset != NULL) {
-            //printf("%s:%u: %s", current_path, line_number, line);
+            printf("%s:%u: %s", current_path, line_number, line);
             num_occurences++;
         }
     }
@@ -294,8 +294,6 @@ void* worker_thread (void* param)
         dequeue(&wstate.t_work_queue, current_path);
         unlock_mutex();
 
-        printf("Thread %d working %s\n", args->tid, current_path);
-
         lstat(current_path, &file_stats);
         /* if work item is a file, scan it for our string
          * if work item is a directory, add its contents to the work queue */
@@ -323,9 +321,9 @@ void* worker_thread (void* param)
         }
     }
 
-    lock_mutex();
-    wstate.still_working--;
-    unlock_mutex();
+    //lock_mutex();
+    //wstate.still_working--;
+    //unlock_mutex();
 
     signal_threads();
 
@@ -379,7 +377,7 @@ void minigrep_pthreads(char* path, char* string)
 
     lock_mutex();
 
-    while(wstate.still_working) {
+    while(wstate.t_work_queue) {
         pthread_cond_wait(&wstate.signal, &wstate.mutex);
     }
 
