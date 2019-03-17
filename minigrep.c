@@ -48,7 +48,7 @@ void enqueue (queue_t* head, char* path)
 }
 
 /***** PTHREAD STUFF *********************************/
-#define NUM_WORKER_THREADS 25
+#define NUM_WORKER_THREADS 5
 
 typedef struct thread_data {
     int tid;
@@ -280,6 +280,22 @@ void signal_threads(void)
     }
 }
 
+/* Set pthread attribute to detached exit on failure */
+void set_pthread_detach(pthread_attr_t *attr)
+{
+    int ret;
+
+    ret = pthread_attr_init(attr);
+    if (ret) {
+        fprintf(stderr, "Failed to init pthread attribute\n");
+        exit(EXIT_FAILURE);
+    }
+
+    pthread_attr_setdetachstate(attr, PTHREAD_CREATE_DETACHED);
+}
+
+static int probs[NUM_WORKER_THREADS] = {0}; 
+
 void* worker_thread (void* param)
 {
     thread_data_t *args = (thread_data_t *) param;
@@ -287,11 +303,14 @@ void* worker_thread (void* param)
     struct stat file_stats;
     int ret;
 
-    while (wstate.t_work_queue != NULL) {
+    while (1) {
         lock_mutex();
-        dequeue(&wstate.t_work_queue, current_path);
 
+        dequeue(&wstate.t_work_queue, current_path);
         lstat(current_path, &file_stats);
+
+        //printf("Thread %d working on %s\n", args->tid, current_path);
+        probs[args->tid]++;
         /* if work item is a file, scan it for our string
          * if work item is a directory, add its contents to the work queue */
         if (S_ISDIR(file_stats.st_mode)) {
@@ -314,26 +333,17 @@ void* worker_thread (void* param)
         else {
             printf("warning -- skipping file of unknown type %s\n", current_path);
         }
+        if (wstate.t_work_queue == NULL) {
+            unlock_mutex();
+            break;
+        }
+
+        pthread_cond_wait(&wstate.signal, &wstate.mutex);
+
         unlock_mutex();
     }
 
-    signal_threads();
-
     return NULL;
-}
-
-/* Set pthread attribute to detached exit on failure */
-void set_pthread_detach(pthread_attr_t *attr)
-{
-    int ret;
-
-    ret = pthread_attr_init(attr);
-    if (ret) {
-        fprintf(stderr, "Failed to init pthread attribute\n");
-        exit(EXIT_FAILURE);
-    }
-
-    pthread_attr_setdetachstate(attr, PTHREAD_CREATE_DETACHED);
 }
 
 void create_detached_thread(thread_data_t *args)
@@ -367,15 +377,22 @@ void minigrep_pthreads(char* path, char* string)
         create_detached_thread(&thread_args[i]);
     }
 
-    lock_mutex();
+    while(1) {
+        signal_threads();
 
-    while(wstate.t_work_queue) {
-        pthread_cond_wait(&wstate.signal, &wstate.mutex);
+        lock_mutex();
+
+        if (wstate.t_work_queue == NULL)
+            break;
+
+        unlock_mutex();
     }
 
-    unlock_mutex();
-
     free(thread_args);
+
+    printf("\n\n");
+    for (i = 0; i < NUM_WORKER_THREADS; i++)
+        printf("Thread %d accessed global %d time(s)\n", i, probs[i]);
 
     printf("\n\nFound %u instance(s) of string \"%s\".\n", num_occurences, string);
 }
