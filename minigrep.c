@@ -56,14 +56,12 @@ typedef struct thread_data {
 } thread_data_t;
 
 typedef struct workers_state {
-    int still_working;
     queue_t t_work_queue;
     pthread_mutex_t mutex;
     pthread_cond_t signal;
 } workers_state_t;
 
 static struct workers_state wstate = {
-    .still_working = NUM_WORKER_THREADS,
     .t_work_queue = QUEUE_INITIALIZER,
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .signal = PTHREAD_COND_INITIALIZER
@@ -292,19 +290,16 @@ void* worker_thread (void* param)
     while (wstate.t_work_queue != NULL) {
         lock_mutex();
         dequeue(&wstate.t_work_queue, current_path);
-        unlock_mutex();
 
         lstat(current_path, &file_stats);
         /* if work item is a file, scan it for our string
          * if work item is a directory, add its contents to the work queue */
         if (S_ISDIR(file_stats.st_mode)) {
             /* work item is a directory; descend into it and post work to the queue */
-            lock_mutex();
             ret = handle_directory(&wstate.t_work_queue, current_path);
             if (ret < 0) {
                 fprintf(stderr, "warning -- unable to decend into %s\n", current_path);
             }
-            unlock_mutex();
         }
         else if (S_ISREG(file_stats.st_mode)) {
             /* work item is a file; scan it for our string */
@@ -319,11 +314,8 @@ void* worker_thread (void* param)
         else {
             printf("warning -- skipping file of unknown type %s\n", current_path);
         }
+        unlock_mutex();
     }
-
-    //lock_mutex();
-    //wstate.still_working--;
-    //unlock_mutex();
 
     signal_threads();
 
